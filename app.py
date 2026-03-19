@@ -85,7 +85,8 @@ st.plotly_chart(fig, use_container_width=True)
 
 st.subheader("💰 當前模擬資產")
 st.write(f"從 {start_date.date()} 開始，本金 {start_capital:,} USD")
-st.write(f"最新資產價值: **{int(equity_series.iloc[-1]):,} USD**")k2.metric("年化報酬率", f"{round(annual_return*100,2)}%")
+st.write(f"最新資產價值: **{int(equity_series.iloc[-1]):,} USD**")
+k2.metric("年化報酬率", f"{round(annual_return*100,2)}%")
 k3.metric("歷史最大回撤", f"{round(mdd*100,2)}%", delta_color="inverse")
 
 # =========================
