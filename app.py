@@ -91,7 +91,7 @@ for i in range(100, last_idx):
     day_ret -= fee_pct * 2  # 一次買一次賣
     equity.append(equity[-1]*(1+day_ret))
 
-equity_series = pd.Series(equity, index=df.index[99:])
+equity_series = pd.Series(equity[1:], index=df.index[100:])  # 去掉初始資金
 
 # =========================
 # 5️⃣ 介面顯示
