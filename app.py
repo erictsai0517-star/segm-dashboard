@@ -1,3 +1,8 @@
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+import plotly.graph_objects as go
+from datetime import datetime
 
 # =========================
 # 1️⃣ 基礎設定
@@ -129,21 +134,4 @@ progress = min(current_val / target_goal, 1.0)
 st.progress(progress)
 st.write(f"目前已達成 1 億美金目標的 **{round(progress*100,6)}%**")
 st.info("💡 模型核心：風控避開黑天鵝，槓桿加速複利，回撤是複利的門票。")
-st.warning("⚠️ 僅策略展示，不構成投資建議。投資有風險，請自行決策。")    x=equity_series.index,
-    y=equity_series.values,
-    mode='lines',
-    line=dict(color='#00ff88', width=2.5),
-    fill='tozeroy',
-    fillcolor='rgba(0, 255, 136, 0.05)'
-))
-fig.update_layout(
-    template="plotly_dark",
-    hovermode="x unified",
-    dragmode="pan",
-    height=600,
-    xaxis=dict(showgrid=False, rangeslider=dict(visible=True)),
-    yaxis=dict(showgrid=True, fixedrange=False)
-)
-st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
-
-
+st.warning("⚠️ 僅策略展示，不構成投資建議。投資有風險，請自行決策。")
