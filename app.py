@@ -13,7 +13,7 @@ st.title("🚀 SEGM 投資儀表板")
 symbols = {
     "QQQ": "QQQ",
     "BTC": "BTC-USD",
-    "VIX": "^VIXY"
+    "VIX": "VIXY"
 }
 
 data = {}
@@ -22,33 +22,38 @@ for name, ticker in symbols.items():
     try:
         df_temp = yf.download(ticker, period="1y", progress=False)
 
-        if not df_temp.empty and "Close" in df_temp.columns:
-            data[name] = df_temp["Close"]
+        # ❗ 完全防呆
+        if df_temp is None or df_temp.empty:
+            continue
 
-    except:
-        st.error(f"{name} 資料抓取失敗")
+        # 處理 MultiIndex（雲端常見）
+        if isinstance(df_temp.columns, pd.MultiIndex):
+            close = df_temp.xs("Close", level=0, axis=1)
+        else:
+            if "Close" not in df_temp.columns:
+                continue
+            close = df_temp["Close"]
 
-# 防止完全沒資料
+        # ❗ 確保是 Series
+        if isinstance(close, pd.Series):
+            data[name] = close
+
+    except Exception as e:
+        st.write(f"{name} error:", e)
+
+# ❗ 至少要兩個資產
 if len(data) < 2:
-    st.error("❌ 資料不足，請稍後再試")
+    st.error("❌ 無法取得足夠市場資料")
     st.stop()
 
-df = pd.DataFrame(data).dropna()
+df = pd.DataFrame(data)
 
-# =========================
-# 2️⃣ 指標計算
-# =========================
-momentum = df.pct_change(60)
-df["BTC_MA100"] = df["BTC"].rolling(100).mean()
+# ❗ 再保險
+if df.empty:
+    st.error("❌ DataFrame 為空")
+    st.stop()
 
 df = df.dropna()
-
-# 防止資料不足
-if len(df) < 5:
-    st.error("❌ 資料不足（MA或動量尚未形成）")
-    st.stop()
-
-today = df.index[-1]
 
 # =========================
 # 3️⃣ 策略邏輯
