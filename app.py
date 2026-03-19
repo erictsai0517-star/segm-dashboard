@@ -1,8 +1,3 @@
-import streamlit as st
-import yfinance as yf
-import pandas as pd
-import plotly.graph_objects as go
-from datetime import datetime
 
 # =========================
 # 1️⃣ 基礎設定
@@ -151,12 +146,4 @@ fig.update_layout(
 )
 st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True})
 
-# 終極目標
-st.divider()
-st.subheader("🏁 SEGM 終極財富目標")
-current_val = equity_series.iloc[-1]
-progress = min(current_val / target_goal, 1.0)
-st.progress(progress)
-st.write(f"目前已達成 **1 億美金** 目標的 **{round(progress*100, 6)}%**")
-st.info("💡 **模型核心目的：** 用風控避開黑天鵝，以槓桿實現階級跨躍，回撤是複利的門票，風控是活命的保險，只為最後的數字服務。")
-st.warning("⚠️ 本網站僅為策略展示，不構成任何投資建議。投資有風險，請自行決策。")
+
