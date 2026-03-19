@@ -108,7 +108,7 @@ current_val = equity_series.iloc[-1]
 progress = min(current_val / target_goal, 1.0)
 st.progress(progress)
 st.write(f"目前已達成 **1 億美金** 目標的 **{round(progress*100, 6)}%**")
-st.info("💡 **模型核心目的：** 透過風控避開黑天鵝，以 2.5x 槓桿實現跨世代的資產階級跳躍。")
+st.info(" **模型核心目的：** 用風控避開黑天鵝，以槓桿實現階級跨躍，回撤是複利的門票，風控是活命的保險，只為最後的數字服務。“)
 # 在側邊欄加入開關
 st.sidebar.divider()
 st.sidebar.header("🔥 風險偏好")
