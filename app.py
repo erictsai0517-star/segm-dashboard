@@ -16,6 +16,21 @@ start_capital = st.sidebar.number_input("初始投入資金 (USD)", value=100000
 agg_mode = st.sidebar.checkbox("開啟 2.5x 激進模式", value=True)
 trade_fee_rate = st.sidebar.number_input("每次換手手續費 (%)", value=0.1, step=0.01)/100  # 0.1% 預設
 target_goal = 100000000 # 一億美金目標
+start_date = st.sidebar.date_input("回測開始日期", value=pd.to_datetime("2023-01-01"))
+end_date = pd.to_datetime("today")
+
+@st.cache_data(ttl=3600)
+def get_clean_data(start_date, end_date):
+    tickers = {"BTC": "BTC-USD", "QQQ": "QQQ", "GOLD": "GLD", "VIX": "^VIX", "UUP": "UUP"}
+    data = pd.DataFrame()
+    for name, sym in tickers.items():
+        t = yf.download(sym, start=start_date, end=end_date, progress=False)['Close']
+        if isinstance(t, pd.DataFrame):
+            t = t.iloc[:,0]
+        data[name] = t
+    return data.dropna()
+
+df = get_clean_data(start_date, end_date)
 
 # 槓桿上限依風險模式
 max_lev = 2.5 if agg_mode else 1.0
