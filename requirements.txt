@@ -3,3 +3,4 @@ yfinance
 pandas
 numpy
 plotly
+pip install --upgrade yfinance
