@@ -43,10 +43,10 @@ lev_panic  = st.sidebar.slider("極度恐慌 VIX > 40",   0.1, 1.0, 0.5, 0.1)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**🛡️ 止損設定**")
-sl_half = st.sidebar.slider("半倉止損線（從高點回撤 %）", 5, 25, 12, 1)
-sl_full = st.sidebar.slider("清倉止損線（從高點回撤 %）", 10, 40, 20, 1)
-sl_resume_vix = st.sidebar.slider("止損解除：VIX 需降至", 15, 35, 25, 1)
-st.sidebar.caption(f"回撤>{sl_half}% → 槓桿砍半　回撤>{sl_full}% → 全部現金　VIX<{sl_resume_vix} → 恢復正常")
+sl_half   = st.sidebar.slider("半倉止損線（從高點回撤 %）", 5, 25, 12, 1)
+sl_full   = st.sidebar.slider("清倉止損線（從高點回撤 %）", 10, 40, 20, 1)
+sl_resume = st.sidebar.slider("止損解除：淨值需回升 %（從止損點起算）", 1, 15, 5, 1)
+st.sidebar.caption(f"回撤>{sl_half}% → 槓桿砍半　回撤>{sl_full}% → 全部現金　從止損點漲回{sl_resume}% → 恢復正常")
 
 st.sidebar.markdown("---")
 start_date = st.sidebar.date_input("回測起始日期", datetime.date(2020, 1, 1))
@@ -206,9 +206,10 @@ try:
     spy_ret   = df_all["SPY"].pct_change()
 
     rows = []
-    cum_value  = 1.0   # 追蹤策略淨值
-    peak_value = 1.0   # 追蹤歷史高點
-    sl_state   = "normal"  # normal → half → full_cash
+    cum_value    = 1.0
+    peak_value   = 1.0
+    sl_state     = "normal"
+    sl_trig_value = None   # 記錄觸發清倉時的淨值，用來計算回升幅度
 
     dates = bt.index[:-1]  # 最後一天沒有次日
 
@@ -222,20 +223,28 @@ try:
             continue
         next_day = df_all.index[loc + 1]
 
-        # ── 止損狀態更新（用當天開始前的淨值判斷）──
+        # ── 止損狀態更新 ──
         drawdown = cum_value / peak_value - 1
         vix_t    = bt.loc[date, "VIX"]
 
         if sl_state == "full_cash":
-            # 全倉現金中，等 VIX 降回閾值才解除
-            if vix_t < sl_resume_vix:
+            # 解除條件：從觸發點回升達 sl_resume%
+            recovery = cum_value / sl_trig_value - 1 if sl_trig_value else 0
+            if recovery >= sl_resume / 100:
                 sl_state = "normal"
-        elif drawdown < -(sl_full / 100):
-            sl_state = "full_cash"
-        elif drawdown < -(sl_half / 100):
-            sl_state = "half"
-        else:
-            sl_state = "normal"
+                sl_trig_value = None
+        elif sl_state == "half":
+            if drawdown < -(sl_full / 100):
+                sl_state = "full_cash"
+                sl_trig_value = cum_value
+            elif drawdown >= -(sl_half / 100):
+                sl_state = "normal"   # 回升超過半倉線，恢復正常
+        else:  # normal
+            if drawdown < -(sl_full / 100):
+                sl_state = "full_cash"
+                sl_trig_value = cum_value
+            elif drawdown < -(sl_half / 100):
+                sl_state = "half"
 
         # ── 選股訊號 ──
         mom_t = momentum.loc[date, TRADABLE].dropna().sort_values(ascending=False)
