@@ -7,7 +7,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 st.set_page_config(page_title="SEGM 投資儀表板", layout="wide")
-st.title("🚀 SEGM 投資儀表板（凱利動態槓桿版）")
+st.title("🚀 SEGM 投資儀表板（無TQQQ · 凱利動態槓桿）")
 
 TICKER_MAP = {
     "QQQ":  "QQQ",
@@ -21,7 +21,7 @@ TICKER_MAP = {
     "SPY":  "SPY",
     "VIX":  "^VIX",
 }
-TRADABLE = ["QQQ", "TQQQ", "BTC", "TLT", "GLD", "USO"]
+TRADABLE = ["QQQ", "BTC", "TLT", "GLD", "USO"]
 
 FEES = {
     "QQQ":  0.0005,
@@ -165,12 +165,20 @@ try:
     lev_now = kelly_leverage(recent_qqq, kelly_fraction, kelly_min, kelly_max,
                              vix_val=vix_now, vix_base=vix_base)
 
+    # 今日動態權重計算
+    if p1 != "CASH" and p2 != "CASH":
+        gap_now = abs(m1_val - m2_val)
+        w1_now  = min(0.8, 0.6 + gap_now * 2)
+        w2_now  = 1 - w1_now
+    else:
+        w1_now, w2_now = 0.6, 0.4
+
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("📊 今日策略訊號")
         st.write(f"📅 {today.strftime('%Y-%m-%d')}")
-        st.write(f"🥇 第一名（60%）：**{p1}**　動能：{m1_val:.2%}" if p1 != "CASH" else "🥇 第一名（60%）：**現金防禦**")
-        st.write(f"🥈 第二名（40%）：**{p2}**　動能：{m2_val:.2%}" if p2 != "CASH" else "🥈 第二名（40%）：**現金防禦**")
+        st.write(f"🥇 **{p1}** ({w1_now:.0%})　動能：{m1_val:.2%}" if p1 != "CASH" else f"🥇 **現金防禦** ({w1_now:.0%})")
+        st.write(f"🥈 **{p2}** ({w2_now:.0%})　動能：{m2_val:.2%}" if p2 != "CASH" else f"🥈 **現金防禦** ({w2_now:.0%})")
         st.markdown(f"### 🔥 凱利建議槓桿：{lev_now:.2f}x")
 
     with col2:
@@ -211,8 +219,9 @@ try:
         if len(mom_t) < 2: continue
 
         pk1 = mom_t.index[0]; pk2 = mom_t.index[1]
-        if mom_t.iloc[0] < 0: pk1 = "CASH"
-        if mom_t.iloc[1] < 0: pk2 = "CASH"
+        m1_t = mom_t.iloc[0]; m2_t = mom_t.iloc[1]
+        if m1_t < 0: pk1 = "CASH"
+        if m2_t < 0: pk2 = "CASH"
 
         btc_t    = bt.loc[date, "BTC"]
         btc_ma_t = bt.loc[date, "BTC_MA"]
@@ -221,7 +230,39 @@ try:
             if pk1 == "BTC": pk1 = "QQQ" if qqq_m >= 0 else "CASH"
             if pk2 == "BTC": pk2 = "QQQ" if qqq_m >= 0 else "CASH"
 
-        # 凱利槓桿
+        # ── 動態權重：動能差距越大，第一名權重越高 ──
+        # 基準 60/40，動能差距每增加 1%，第一名再加 2%，上限 80/20
+        if pk1 != "CASH" and pk2 != "CASH":
+            mom_gap = abs(m1_t - m2_t)        # 動能差距
+            w1 = min(0.8, 0.6 + mom_gap * 2)  # 最高 80%
+            w2 = 1 - w1
+        elif pk1 != "CASH" and pk2 == "CASH":
+            w1, w2 = 0.6, 0.4                 # 第二名現金維持原比例
+        else:
+            w1, w2 = 0.0, 0.0                 # 都是現金
+
+        # ── 市場狀態偵測（用 QQQ 的動能判斷牛熊） ──
+        qqq_mom_t = momentum.loc[date, "QQQ"] if "QQQ" in momentum.columns else 0
+        spy_ma60  = df_all["SPY"].rolling(60).mean()
+        spy_above_ma = df_all.loc[date, "SPY"] > spy_ma60.loc[date] if date in spy_ma60.index else True
+
+        # 牛市條件：QQQ動能正 + SPY在60日均線上方
+        is_bull = (qqq_mom_t > 0) and spy_above_ma
+        # 熊市條件：QQQ動能負 + VIX高於基準
+        is_bear = (qqq_mom_t < 0) and (vix_t > vix_base)
+
+        # 動態調整凱利上下限
+        if is_bull:
+            dyn_max = kelly_max          # 牛市：放開上限
+            dyn_min = kelly_min          # 牛市：維持下限
+        elif is_bear:
+            dyn_max = kelly_max * 0.5    # 熊市：上限砍半
+            dyn_min = kelly_min * 0.5    # 熊市：下限也降（允許更保守）
+        else:
+            dyn_max = kelly_max * 0.75   # 震盪：上限縮 25%
+            dyn_min = kelly_min
+
+        # 凱利槓桿（含VIX動態天花板 + 市場狀態上下限）
         if len(strat_ret_ts) >= kelly_window:
             wr = strat_ret_ts.iloc[-kelly_window:]
         elif len(strat_ret_ts) >= 5:
@@ -231,18 +272,18 @@ try:
             wr    = proxy.loc[:date].iloc[-kelly_window:]
 
         vix_t = bt.loc[date, "VIX"]
-        lev_t = kelly_leverage(wr, kelly_fraction, kelly_min, kelly_max,
+        lev_t = kelly_leverage(wr, kelly_fraction, dyn_min, dyn_max,
                                vix_val=vix_t, vix_base=vix_base)
 
-        # 手續費（換倉才扣，買賣雙邊）
+        # 手續費（換倉才扣，買賣雙邊，用動態權重）
         fee = 0.0
         if prev_pk1 is not None:
             if pk1 != prev_pk1:
-                if prev_pk1 != "CASH": fee += FEES.get(prev_pk1, 0.001) * 0.6  # 賣
-                if pk1      != "CASH": fee += FEES.get(pk1,      0.001) * 0.6  # 買
+                if prev_pk1 != "CASH": fee += FEES.get(prev_pk1, 0.001) * w1
+                if pk1      != "CASH": fee += FEES.get(pk1,      0.001) * w1
             if pk2 != prev_pk2:
-                if prev_pk2 != "CASH": fee += FEES.get(prev_pk2, 0.001) * 0.4
-                if pk2      != "CASH": fee += FEES.get(pk2,      0.001) * 0.4
+                if prev_pk2 != "CASH": fee += FEES.get(prev_pk2, 0.001) * w2
+                if pk2      != "CASH": fee += FEES.get(pk2,      0.001) * w2
         prev_pk1 = pk1; prev_pk2 = pk2
 
         # 次日報酬
@@ -253,14 +294,17 @@ try:
             return 0.0 if pd.isna(v) else float(v)
 
         r1 = next_ret(pk1); r2 = next_ret(pk2)
-        risky  = (0.6 * r1 if pk1 != "CASH" else 0) + (0.4 * r2 if pk2 != "CASH" else 0)
-        cash_r = (0.6 * cash_daily_rate if pk1 == "CASH" else 0) + \
-                 (0.4 * cash_daily_rate if pk2 == "CASH" else 0)
+
+        # 動態權重報酬
+        risky  = (w1 * r1 if pk1 != "CASH" else 0) + (w2 * r2 if pk2 != "CASH" else 0)
+        cash_r = (w1 * cash_daily_rate if pk1 == "CASH" else 0) + \
+                 (w2 * cash_daily_rate if pk2 == "CASH" else 0)
         day_ret = risky * lev_t + cash_r - fee
 
+        regime = "🐂牛" if is_bull else "🐻熊" if is_bear else "↔震"
         strat_ret_ts = pd.concat([strat_ret_ts, pd.Series([day_ret], index=[date])])
         rows.append({"Date": date, "ret": day_ret, "pk1": pk1, "pk2": pk2,
-                     "lev": lev_t, "fee": fee})
+                     "w1": w1, "lev": lev_t, "regime": regime, "fee": fee})
 
     if not rows:
         st.error("❌ 無有效資料"); st.stop()
@@ -300,12 +344,13 @@ try:
     d2.metric("SPY 總累積報酬",  f"{m_b['total']*100:.2f}%")
 
     st.subheader("🔄 最近 30 天輪動紀錄")
-    recent = res[["pk1","pk2","lev","fee","ret"]].tail(30).copy()
-    recent["ret"] = recent["ret"].map(lambda x: f"{x*100:+.2f}%")
-    recent["lev"] = recent["lev"].map(lambda x: f"{x:.2f}x")
-    recent["fee"] = recent["fee"].map(lambda x: f"{x*100:.3f}%" if x > 0 else "-")
-    recent.index  = recent.index.strftime("%Y-%m-%d")
-    recent.columns = ["第一名 (60%)", "第二名 (40%)", "凱利槓桿", "手續費", "當日報酬"]
+    recent = res[["pk1","pk2","w1","lev","regime","fee","ret"]].tail(30).copy()
+    recent["ret"]    = recent["ret"].map(lambda x: f"{x*100:+.2f}%")
+    recent["lev"]    = recent["lev"].map(lambda x: f"{x:.2f}x")
+    recent["w1"]     = recent["w1"].map(lambda x: f"{x:.0%}/{1-x:.0%}")
+    recent["fee"]    = recent["fee"].map(lambda x: f"{x*100:.3f}%" if x > 0 else "-")
+    recent.index     = recent.index.strftime("%Y-%m-%d")
+    recent.columns   = ["第一名", "第二名", "權重", "槓桿", "市場狀態", "手續費", "當日報酬"]
     st.dataframe(recent[::-1], use_container_width=True)
 
 except Exception as e:
@@ -313,4 +358,3 @@ except Exception as e:
     st.error(f"⚠️ 執行錯誤：{e}")
     with st.expander("詳細錯誤訊息"):
         st.code(traceback.format_exc())
-        
