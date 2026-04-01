@@ -508,4 +508,51 @@ try:
             "年化報酬":   f"{m['cagr']*100:.1f}%",
             "最大回撤":   f"{m['mdd']*100:.1f}%",
             "夏普比率":   f"{m['sharpe']:.2f}",
-            "Calm
+            "Calmr":     f"{m_cur['calmar']:.2f}",
+            "勝率":       f"{m_cur['winrate']*100:.1f}%",
+        })
+
+    compare_rows.append({
+        "版本": "📌 SPY 基準",
+        "總累積報酬": f"{m_spy['total']*100:.1f}%",
+        "年化報酬":   f"{m_spy['cagr']*100:.1f}%",
+        "最大回撤":   f"{m_spy['mdd']*100:.1f}%",
+        "夏普比率":   f"{m_spy['sharpe']:.2f}",
+        "Calmar":     f"{m_spy['calmar']:.2f}",
+        "勝率":       f"{m_spy['winrate']*100:.1f}%",
+    })
+    st.dataframe(pd.DataFrame(compare_rows), use_container_width=True, hide_index=True)
+
+    # ── 詳細績效 ──
+    st.subheader(f"📋 {preset_name} 詳細績效")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("年化報酬 CAGR", f"{m_cur['cagr']:.2%}",    f"SPY: {m_spy['cagr']:.2%}")
+    c2.metric("夏普比率",       f"{m_cur['sharpe']:.2f}",  f"SPY: {m_spy['sharpe']:.2f}")
+    c3.metric("最大回撤 MDD",  f"{m_cur['mdd']:.2%}",     f"SPY: {m_spy['mdd']:.2%}")
+    c4.metric("Calmar 比率",   f"{m_cur['calmar']:.2f}",  f"SPY: {m_spy['calmar']:.2f}")
+    c5.metric("勝率",           f"{m_cur['winrate']:.1%}", f"SPY: {m_spy['winrate']:.1%}")
+    d1, d2 = st.columns(2)
+    d1.metric("SEGM 總累積報酬", f"{m_cur['total']*100:.2f}%",
+              f"{(m_cur['total']-m_spy['total'])*100:.2f}% vs SPY")
+    d2.metric("SPY 總累積報酬",  f"{m_spy['total']*100:.2f}%")
+
+    with st.expander("📊 凱利槓桿歷史"):
+        st.line_chart(res["lev"].rename("槓桿"), use_container_width=True)
+        st.caption(f"平均 {res['lev'].mean():.2f}x　最高 {res['lev'].max():.2f}x　最低 {res['lev'].min():.2f}x")
+
+    st.subheader("🔄 最近 30 天輪動紀錄")
+    recent = res[["pk1","pk2","w1","lev","regime","fee","margin","ret"]].tail(30).copy()
+    recent["ret"]    = recent["ret"].map(lambda x: f"{x*100:+.2f}%")
+    recent["lev"]    = recent["lev"].map(lambda x: f"{x:.2f}x")
+    recent["w1"]     = recent["w1"].map(lambda x: f"{x:.0%}/{1-x:.0%}")
+    recent["fee"]    = recent["fee"].map(lambda x: f"{x*100:.3f}%" if x > 0 else "-")
+    recent["margin"] = recent["margin"].map(lambda x: f"{x*100:.4f}%")
+    recent.index     = recent.index.strftime("%Y-%m-%d")
+    recent.columns   = ["第一名","第二名","權重","槓桿","狀態","手續費","融資成本","當日報酬"]
+    st.dataframe(recent[::-1], use_container_width=True)
+
+except Exception as e:
+    import traceback
+    st.error(f"⚠️ 執行錯誤：{e}")
+    with st.expander("詳細錯誤"):
+        st.code(traceback.format_exc())
