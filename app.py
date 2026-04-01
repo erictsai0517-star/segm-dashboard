@@ -6,71 +6,47 @@ import datetime
 import warnings
 warnings.filterwarnings('ignore')
 
-st.set_page_config(page_title="SEGM 投資儀表板 v3", layout="wide")
-st.title("🚀 SEGM 投資儀表板 v3（Ensemble + 止損 + 黑天鵝防護）")
+st.set_page_config(page_title="SEGM 投資儀表板", layout="wide")
+st.title("🚀 SEGM 投資儀表板（終極修正版）")
 
 # ==================== 標的設定 ====================
+# 【修正1】空頭ETF (SQQQ/SH) 不參與動能排名，單獨處理
 TICKER_MAP = {
-    # 多頭輪動池
     "QQQ":  "QQQ",
-    "SPY":  "SPY",
-    "TQQQ": "TQQQ",
     "BTC":  "BTC-USD",
-    "IWM":  "IWM",
-    "EEM":  "EEM",
-    "VNQ":  "VNQ",
-    # 避險 / 原物料
+    "TQQQ": "TQQQ",
+    "SQQQ": "SQQQ",   # 空頭，不進動能排名
+    "SH":   "SH",     # 空頭，不進動能排名
     "TLT":  "TLT",
-    "SHY":  "SHY",
     "GLD":  "GLD",
-    "GDX":  "GDX",
     "USO":  "USO",
-    "UNG":  "UNG",
-    # 空頭（不進輪動，只在黑天鵝時備用）
-    "SQQQ": "SQQQ",
-    "SH":   "SH",
-    # 指標
-    "VIX":  "^VIX",
+    "SPY":  "SPY",    # 基準
+    "VIX":  "^VIX",   # 風控指標
 }
 
-# 參與動能輪動的標的（排除空頭/VIX）
-TRADABLE = ["QQQ", "SPY", "TQQQ", "BTC", "IWM", "EEM", "VNQ",
-            "TLT", "SHY", "GLD", "GDX", "USO", "UNG"]
-
-# Ensemble 多週期動能（財務學有根據的週期）
-MOMENTUM_PERIODS = [20, 40, 60, 120]  # 1個月、2個月、3個月、6個月
+# 只有這些標的參與動能排名（排除空頭、VIX、SPY）
+TRADABLE = ["QQQ", "TQQQ", "BTC", "TLT", "GLD", "USO"]
 
 # ==================== 側邊欄 ====================
-st.sidebar.header("⚙️ 策略設定")
-
-st.sidebar.markdown("**📐 Ensemble 動能週期**")
-st.sidebar.caption("同時計算以下週期的排名，取平均 → 無過擬合")
-for p in MOMENTUM_PERIODS:
-    st.sidebar.markdown(f"　・{p} 天（{'1個月' if p==20 else '2個月' if p==40 else '3個月' if p==60 else '6個月'}）")
-
-btc_ma_period    = st.sidebar.number_input("BTC 均線週期（天）", 10, 200, 50)
-cash_annual_rate = st.sidebar.number_input("現金年化利率（%）",  0.0, 10.0, 4.5)
+st.sidebar.header("⚙️ 策略與回測設定")
+momentum_period  = st.sidebar.number_input("動能週期（天）",      10, 200, 60)
+btc_ma_period    = st.sidebar.number_input("BTC 均線週期（天）",   10, 200, 100)
+cash_annual_rate = st.sidebar.number_input("現金年化利率（%）",    0.0, 10.0, 2.0)
 cash_daily_rate  = (1 + cash_annual_rate / 100) ** (1/252) - 1
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("**⚡ 槓桿設定**")
-lev_normal = st.sidebar.slider("正常槓桿 VIX < 20",  1.0, 3.0, 2.0, 0.1)
-lev_mild   = st.sidebar.slider("輕度警戒 VIX 20~30", 0.5, 2.0, 0.8, 0.1)
-lev_high   = st.sidebar.slider("高度警戒 VIX 30~40", 0.2, 1.5, 0.6, 0.1)
-lev_panic  = st.sidebar.slider("極度恐慌 VIX > 40",  0.1, 1.0, 0.4, 0.1)
+st.sidebar.markdown("**槓桿閾值設定**")
+lev_normal = st.sidebar.slider("正常槓桿 VIX < 20",   1.0, 3.0, 2.5, 0.1)
+lev_mild   = st.sidebar.slider("輕度警戒 VIX 20~30",  0.5, 2.0, 0.8, 0.1)
+lev_high   = st.sidebar.slider("高度警戒 VIX 30~40",  0.2, 1.5, 0.6, 0.1)
+lev_panic  = st.sidebar.slider("極度恐慌 VIX > 40",   0.1, 1.0, 0.5, 0.1)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**🛡️ 止損設定**")
-sl_half  = st.sidebar.slider("半倉止損線（從高點回撤 %）", 5,  25, 12, 1)
-sl_full  = st.sidebar.slider("全倉止損線（從高點回撤 %）", 10, 40, 20, 1)
-sl_resume_vix = st.sidebar.slider("止損後重新進場 VIX 閾值", 15, 35, 25, 1)
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("**🦢 黑天鵝防護**")
-bs_vix_spike  = st.sidebar.slider("VIX 單日暴漲觸發（%）",       20, 60, 30, 5)
-bs_tqqq_drop  = st.sidebar.slider("TQQQ 單日暴跌觸發（%）",      -30, -5, -15, 1)
-bs_lev_after  = st.sidebar.slider("黑天鵝觸發後槓桿",             0.1, 1.0, 0.5, 0.1)
-bs_cooldown   = st.sidebar.slider("黑天鵝後冷卻天數（強制低槓）", 1, 10, 3, 1)
+sl_half = st.sidebar.slider("半倉止損線（從高點回撤 %）", 5, 25, 12, 1)
+sl_full = st.sidebar.slider("清倉止損線（從高點回撤 %）", 10, 40, 20, 1)
+sl_resume_vix = st.sidebar.slider("止損解除：VIX 需降至", 15, 35, 25, 1)
+st.sidebar.caption(f"回撤>{sl_half}% → 槓桿砍半　回撤>{sl_full}% → 全部現金　VIX<{sl_resume_vix} → 恢復正常")
 
 st.sidebar.markdown("---")
 start_date = st.sidebar.date_input("回測起始日期", datetime.date(2020, 1, 1))
@@ -83,31 +59,44 @@ if start_date >= end_date:
 # ==================== 資料下載 ====================
 @st.cache_data(ttl=3600)
 def load_data(ticker_map: dict) -> pd.DataFrame:
+    """
+    【修正3】正確處理 yfinance MultiIndex
+    yfinance >= 0.2 下載單一 ticker 時，columns 為 MultiIndex:
+      level 0 = 欄位名稱 (Open/High/Low/Close/Volume)
+      level 1 = Ticker 代號
+    """
     series_dict = {}
     failed = []
+
     for name, ticker in ticker_map.items():
         try:
             raw = yf.download(ticker, period="max", progress=False, auto_adjust=True)
             if raw.empty:
                 failed.append(name)
                 continue
+
             if isinstance(raw.columns, pd.MultiIndex):
+                # 正確做法：用 level 0 找 'Close'，再 droplevel
                 if "Close" in raw.columns.get_level_values(0):
-                    series_dict[name] = raw["Close"].squeeze()
+                    close = raw["Close"]
+                    # close 可能是 DataFrame（單ticker時是只有一欄的DF）
+                    series_dict[name] = close.squeeze()  # 強制轉成 Series
                 else:
-                    failed.append(f"{name}(無Close)")
+                    failed.append(f"{name}(無Close欄)")
             else:
                 if "Close" in raw.columns:
                     series_dict[name] = raw["Close"]
                 else:
-                    failed.append(f"{name}(無Close)")
+                    failed.append(f"{name}(無Close欄)")
+
         except Exception as e:
-            failed.append(f"{name}({str(e)[:30]})")
+            failed.append(f"{name}({str(e)[:40]})")
 
     if failed:
         st.sidebar.warning(f"下載失敗：{', '.join(failed)}")
 
-    df = pd.DataFrame(series_dict).ffill().bfill()
+    df = pd.DataFrame(series_dict)
+    df = df.ffill().bfill()  # 填補週末/假日空值
     return df
 
 
@@ -119,20 +108,20 @@ def get_leverage(vix_val: float) -> float:
 
 
 def calc_metrics(ret: pd.Series, rf_daily: float = 0.0) -> dict:
+    """計算績效指標"""
     r = ret.dropna()
     if len(r) < 2:
-        return {k: 0 for k in ["total","cagr","vol","sharpe","mdd","winrate","calmar"]}
-    n     = len(r)
-    total = (1 + r).prod() - 1
-    cagr  = (1 + total) ** (252/n) - 1
-    vol   = r.std() * np.sqrt(252)
-    sharpe  = (cagr - rf_daily*252) / vol if vol > 0 else 0
-    cum     = (1 + r).cumprod()
-    mdd     = (cum / cum.cummax() - 1).min()
-    calmar  = cagr / abs(mdd) if mdd != 0 else 0
-    winrate = (r > 0).mean()
+        return {"total": 0, "cagr": 0, "vol": 0, "sharpe": 0, "mdd": 0, "winrate": 0}
+    n = len(r)
+    total    = (1 + r).prod() - 1
+    cagr     = (1 + total) ** (252/n) - 1
+    vol      = r.std() * np.sqrt(252)
+    sharpe   = (cagr - rf_daily*252) / vol if vol > 0 else 0
+    cum      = (1 + r).cumprod()
+    mdd      = (cum / cum.cummax() - 1).min()
+    winrate  = (r > 0).mean()
     return {"total": total, "cagr": cagr, "vol": vol,
-            "sharpe": sharpe, "mdd": mdd, "calmar": calmar, "winrate": winrate}
+            "sharpe": sharpe, "mdd": mdd, "winrate": winrate}
 
 
 # ==================== 主程式 ====================
@@ -140,292 +129,211 @@ try:
     with st.spinner("📡 載入市場資料中..."):
         df_all = load_data(TICKER_MAP)
 
+    # 檢查核心欄位
     missing = [c for c in ["VIX", "BTC", "QQQ", "SPY"] if c not in df_all.columns]
     if missing:
-        st.error(f"❌ 缺少關鍵欄位：{missing}")
+        st.error(f"❌ 缺少關鍵欄位：{missing}，請確認網路並清除快取後重試。")
         st.stop()
 
-    # ── 技術指標（在完整歷史上算）──
-    df_all["BTC_MA"]   = df_all["BTC"].rolling(btc_ma_period).mean()
-    df_all["VIX_1D_CHG"] = df_all["VIX"].pct_change()  # VIX 單日變動率（黑天鵝偵測）
+    # 技術指標（在完整歷史上算，避免回測區間開頭的 NaN 太多）
+    df_all["BTC_MA"] = df_all["BTC"].rolling(btc_ma_period).mean()
+    momentum = df_all[TRADABLE].pct_change(momentum_period)
 
-    # ── Ensemble 動能：每個週期算排名，取平均排名 ──
-    rank_dfs = []
-    for period in MOMENTUM_PERIODS:
-        mom  = df_all[TRADABLE].pct_change(period)
-        # 每天對所有標的做排名（1=最高動能）
-        rank = mom.rank(axis=1, ascending=False)
-        rank_dfs.append(rank)
-
-    # 平均排名（數字越小越好）
-    ensemble_rank = pd.concat(rank_dfs).groupby(level=0).mean()
-
-    # 切片
+    # 切片到回測區間
     bt = df_all.loc[str(start_date): str(end_date)].copy()
     bt = bt.dropna(subset=["VIX", "BTC", "BTC_MA"])
 
     if len(bt) < 5:
-        st.error(f"❌ 資料不足（{len(bt)}天），請調整日期範圍。")
+        st.error(f"❌ 日期區間 {start_date}~{end_date} 的有效資料不足（只有 {len(bt)} 天），請調整起始日期。")
         st.stop()
 
     # ==================== 今日訊號 ====================
-    today      = bt.index[-1]
-    vix_now    = bt.loc[today, "VIX"]
-    btc_now    = bt.loc[today, "BTC"]
-    btc_ma_now = bt.loc[today, "BTC_MA"]
-    lev_now    = get_leverage(vix_now)
+    today       = bt.index[-1]
+    vix_now     = bt.loc[today, "VIX"]
+    btc_now     = bt.loc[today, "BTC"]
+    btc_ma_now  = bt.loc[today, "BTC_MA"]
+    lev_now     = get_leverage(vix_now)
 
-    rank_today = ensemble_rank.loc[today].dropna().sort_values()  # 小=好
-    avail = [a for a in rank_today.index if a in df_all.columns]
-    rank_today = rank_today[avail]
+    mom_today = momentum.loc[today, TRADABLE].dropna().sort_values(ascending=False)
+    p1 = mom_today.index[0] if len(mom_today) > 0 else "CASH"
+    p2 = mom_today.index[1] if len(mom_today) > 1 else "CASH"
+    m1_val = mom_today.iloc[0] if len(mom_today) > 0 else -1
+    m2_val = mom_today.iloc[1] if len(mom_today) > 1 else -1
 
-    p1 = rank_today.index[0] if len(rank_today) > 0 else "CASH"
-    p2 = rank_today.index[1] if len(rank_today) > 1 else "CASH"
-
-    # 若所有週期動能都是負的才轉現金（用最短週期20天判斷）
-    mom20 = df_all[TRADABLE].pct_change(20)
-    if p1 in mom20.columns and mom20.loc[today, p1] < 0: p1 = "CASH"
-    if p2 in mom20.columns and mom20.loc[today, p2] < 0: p2 = "CASH"
+    if m1_val < 0: p1 = "CASH"
+    if m2_val < 0: p2 = "CASH"
 
     # BTC 均線過濾
     if btc_now < btc_ma_now:
-        qqq_m = mom20.loc[today, "QQQ"] if "QQQ" in mom20.columns else -1
-        if p1 == "BTC": p1 = "QQQ" if qqq_m >= 0 else "CASH"
-        if p2 == "BTC": p2 = "QQQ" if qqq_m >= 0 else "CASH"
+        for side in ["p1", "p2"]:
+            if locals()[side] == "BTC":
+                qqq_m = momentum.loc[today, "QQQ"] if "QQQ" in momentum.columns else -1
+                locals()[side]  # 讀一次（避免 linting 警告）
+                if side == "p1": p1 = "QQQ" if qqq_m >= 0 else "CASH"
+                else:            p2 = "QQQ" if qqq_m >= 0 else "CASH"
 
-    # 黑天鵝今日檢查
-    vix_spike_today  = bt.loc[today, "VIX_1D_CHG"] * 100 if "VIX_1D_CHG" in bt.columns else 0
-    tqqq_drop_today  = df_all["TQQQ"].pct_change().loc[today] * 100 if "TQQQ" in df_all.columns else 0
-    bs_triggered     = (vix_spike_today > bs_vix_spike) or (tqqq_drop_today < bs_tqqq_drop)
-    if bs_triggered:
-        lev_now = bs_lev_after
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("📊 今日策略訊號")
+        st.write(f"📅 訊號日期：{today.strftime('%Y-%m-%d')}")
+        st.write(f"🥇 第一名（60%）：**{p1}**　動能：{m1_val:.2%}" if p1 != "CASH" else "🥇 第一名（60%）：**現金防禦**")
+        st.write(f"🥈 第二名（40%）：**{p2}**　動能：{m2_val:.2%}" if p2 != "CASH" else "🥈 第二名（40%）：**現金防禦**")
+        st.markdown(f"### 🔥 建議槓桿：{lev_now}x")
 
-    # ── 版面：今日訊號 ──
-    tab1, tab2 = st.tabs(["📊 今日訊號", "📈 回測分析"])
+    with col2:
+        st.subheader("⚠️ 風控狀態")
+        st.write(f"VIX：**{vix_now:.2f}**")
+        st.write(f"BTC：**{btc_now:,.0f}** / {btc_ma_period}日均線：**{btc_ma_now:,.0f}**")
+        if vix_now > 30:   st.error("🚨 市場極度恐慌（降槓防禦）")
+        elif vix_now > 20: st.warning("⚠️ 市場波動加劇")
+        else:              st.success("✅ 市場狀態正常")
 
-    with tab1:
-        c1, c2, c3 = st.columns(3)
-
-        with c1:
-            st.subheader("策略訊號")
-            st.write(f"📅 {today.strftime('%Y-%m-%d')}")
-            st.write(f"🥇 **{p1}**（60%）" + (f" 　平均排名 {rank_today.get(p1,'-'):.1f}" if p1 != "CASH" else " 　現金防禦"))
-            st.write(f"🥈 **{p2}**（40%）" + (f" 　平均排名 {rank_today.get(p2,'-'):.1f}" if p2 != "CASH" else " 　現金防禦"))
-            lev_color = "🟢" if lev_now >= 1.5 else "🟡" if lev_now >= 0.8 else "🔴"
-            st.markdown(f"### {lev_color} 建議槓桿：{lev_now}x")
-            if bs_triggered:
-                st.error(f"🦢 黑天鵝觸發！VIX暴漲{vix_spike_today:.1f}% / TQQQ單日{tqqq_drop_today:.1f}%")
-
-        with c2:
-            st.subheader("風控狀態")
-            vix_col = "🔴" if vix_now > 30 else "🟡" if vix_now > 20 else "🟢"
-            st.write(f"VIX：{vix_col} **{vix_now:.2f}**（單日變動 {vix_spike_today:+.1f}%）")
-            st.write(f"BTC：**{btc_now:,.0f}** / {btc_ma_period}日均線：**{btc_ma_now:,.0f}**")
-            btc_status = "均線上方 ✅" if btc_now >= btc_ma_now else "均線下方 ⚠️"
-            st.write(f"BTC趨勢：{btc_status}")
-            if vix_now > 30:   st.error("🚨 市場極度恐慌")
-            elif vix_now > 20: st.warning("⚠️ 市場波動加劇")
-            else:              st.success("✅ 市場狀態正常")
-
-        with c3:
-            st.subheader("Ensemble 動能排名")
-            show_assets = [a for a in rank_today.index[:8] if a in df_all.columns]
-            rank_display = []
-            for i, asset in enumerate(show_assets):
-                # 用20天動能判斷正負
-                m20_val = mom20.loc[today, asset] if asset in mom20.columns else 0
-                rank_display.append({
-                    "排名": i+1,
-                    "標的": asset,
-                    "平均排名分": f"{rank_today[asset]:.1f}",
-                    "20日動能": f"{m20_val:.2%}",
-                    "狀態": "✅" if m20_val > 0 else "❌"
-                })
-            st.dataframe(pd.DataFrame(rank_display), use_container_width=True, hide_index=True)
+    # 動能排名表
+    st.markdown("**📋 當日動能排名**")
+    rank_df = pd.DataFrame({
+        "標的": mom_today.index,
+        "動能": [f"{v:.2%}" for v in mom_today.values],
+        "狀態": ["✅ 正動能" if v > 0 else "❌ 負動能" for v in mom_today.values],
+    })
+    st.dataframe(rank_df, use_container_width=True, hide_index=True)
 
     # ==================== 回測引擎 ====================
-    with tab2:
-        st.subheader(f"策略回測（{start_date} ～ {end_date}）")
-        st.caption("Ensemble動能 + 動態止損 + 黑天鵝防護 vs SPY")
+    st.markdown("---")
+    st.subheader(f"📈 策略回測（{start_date} ～ {end_date}）vs SPY")
 
-        asset_ret = df_all[TRADABLE].pct_change()
-        spy_ret   = df_all["SPY"].pct_change()
+    # 每日報酬（注意：次日報酬需用 df_all 的下一個交易日，不能用 shift）
+    asset_ret = df_all[TRADABLE].pct_change()
+    spy_ret   = df_all["SPY"].pct_change()
 
-        rows = []
-        peak_value   = 1.0   # 追蹤淨值高點（止損用）
-        cum_value    = 1.0
-        sl_state     = "normal"   # normal / half / full_cash
-        bs_cooldown_left = 0      # 黑天鵝冷卻剩餘天數
+    rows = []
+    cum_value  = 1.0   # 追蹤策略淨值
+    peak_value = 1.0   # 追蹤歷史高點
+    sl_state   = "normal"  # normal → half → full_cash
 
-        dates = bt.index[:-1]
+    dates = bt.index[:-1]  # 最後一天沒有次日
 
-        for date in dates:
-            if date not in ensemble_rank.index:
-                continue
+    for date in dates:
+        if date not in momentum.index:
+            continue
 
-            loc = df_all.index.get_loc(date)
-            if loc + 1 >= len(df_all):
-                continue
-            next_day = df_all.index[loc + 1]
+        # 找下一個交易日
+        loc = df_all.index.get_loc(date)
+        if loc + 1 >= len(df_all):
+            continue
+        next_day = df_all.index[loc + 1]
 
-            # ── 黑天鵝偵測 ──
-            vix_chg  = df_all.loc[date, "VIX_1D_CHG"] if "VIX_1D_CHG" in df_all.columns else 0
-            tqqq_chg = asset_ret.loc[date, "TQQQ"] if "TQQQ" in asset_ret.columns and date in asset_ret.index else 0
-            tqqq_chg = tqqq_chg if not pd.isna(tqqq_chg) else 0
+        # ── 止損狀態更新（用當天開始前的淨值判斷）──
+        drawdown = cum_value / peak_value - 1
+        vix_t    = bt.loc[date, "VIX"]
 
-            bs_hit = (vix_chg * 100 > bs_vix_spike) or (tqqq_chg * 100 < bs_tqqq_drop)
-            if bs_hit:
-                bs_cooldown_left = bs_cooldown
-
-            # ── 止損狀態機 ──
-            drawdown_now = cum_value / peak_value - 1
-
-            if sl_state == "full_cash":
-                # 全倉現金，等VIX降下來才恢復
-                vix_t = bt.loc[date, "VIX"] if date in bt.index else 99
-                if vix_t < sl_resume_vix:
-                    sl_state = "normal"
-            elif drawdown_now < -(sl_full / 100):
-                sl_state = "full_cash"
-            elif drawdown_now < -(sl_half / 100):
-                sl_state = "half"
-            else:
+        if sl_state == "full_cash":
+            # 全倉現金中，等 VIX 降回閾值才解除
+            if vix_t < sl_resume_vix:
                 sl_state = "normal"
+        elif drawdown < -(sl_full / 100):
+            sl_state = "full_cash"
+        elif drawdown < -(sl_half / 100):
+            sl_state = "half"
+        else:
+            sl_state = "normal"
 
-            # ── 選股訊號 ──
-            rank_t = ensemble_rank.loc[date].dropna().sort_values()
-            avail_t = [a for a in rank_t.index if a in asset_ret.columns]
-            rank_t  = rank_t[avail_t]
+        # ── 選股訊號 ──
+        mom_t = momentum.loc[date, TRADABLE].dropna().sort_values(ascending=False)
+        if len(mom_t) < 2:
+            continue
 
-            pk1 = rank_t.index[0] if len(rank_t) > 0 else "CASH"
-            pk2 = rank_t.index[1] if len(rank_t) > 1 else "CASH"
+        pk1 = mom_t.index[0]; pk2 = mom_t.index[1]
+        if mom_t.iloc[0] < 0: pk1 = "CASH"
+        if mom_t.iloc[1] < 0: pk2 = "CASH"
 
-            if date in mom20.index:
-                if pk1 in mom20.columns and mom20.loc[date, pk1] < 0: pk1 = "CASH"
-                if pk2 in mom20.columns and mom20.loc[date, pk2] < 0: pk2 = "CASH"
+        btc_t    = bt.loc[date, "BTC"]
+        btc_ma_t = bt.loc[date, "BTC_MA"]
+        if btc_t < btc_ma_t:
+            qqq_m = momentum.loc[date, "QQQ"]
+            if pk1 == "BTC": pk1 = "QQQ" if qqq_m >= 0 else "CASH"
+            if pk2 == "BTC": pk2 = "QQQ" if qqq_m >= 0 else "CASH"
 
-            btc_t    = bt.loc[date, "BTC"]    if date in bt.index else 0
-            btc_ma_t = bt.loc[date, "BTC_MA"] if date in bt.index else 0
-            if btc_t < btc_ma_t:
-                qqq_m_t = mom20.loc[date, "QQQ"] if date in mom20.index and "QQQ" in mom20.columns else -1
-                if pk1 == "BTC": pk1 = "QQQ" if qqq_m_t >= 0 else "CASH"
-                if pk2 == "BTC": pk2 = "QQQ" if qqq_m_t >= 0 else "CASH"
+        # ── 止損覆蓋 ──
+        if sl_state == "full_cash":
+            pk1 = pk2 = "CASH"
 
-            # ── 止損覆蓋選股結果 ──
-            if sl_state == "full_cash":
-                pk1 = pk2 = "CASH"
-            elif sl_state == "half":
-                # 60%持倉 → 30%，另外30%現金；40%持倉 → 20%，另外20%現金
-                # 用權重調整實現（等比縮減持倉）
-                pass  # 在報酬計算時處理
+        lev_t = get_leverage(vix_t)
+        if sl_state == "half":
+            lev_t = lev_t * 0.5   # 槓桿砍半
 
-            # ── 槓桿 ──
-            vix_t  = bt.loc[date, "VIX"] if date in bt.index else 20
-            lev_bt = get_leverage(vix_t)
-            if bs_cooldown_left > 0:
-                lev_bt = min(lev_bt, bs_lev_after)
-                bs_cooldown_left -= 1
+        # ── 次日報酬 ──
+        def next_ret(pick):
+            if pick == "CASH":
+                return cash_daily_rate
+            if pick not in asset_ret.columns or next_day not in asset_ret.index:
+                return 0.0
+            v = asset_ret.loc[next_day, pick]
+            return 0.0 if pd.isna(v) else v
 
-            # 半倉止損：槓桿再砍半
-            if sl_state == "half":
-                lev_bt = lev_bt * 0.5
+        r1 = next_ret(pk1)
+        r2 = next_ret(pk2)
 
-            # ── 次日報酬 ──
-            def get_ret(pick):
-                if pick == "CASH":
-                    return cash_daily_rate
-                if pick not in asset_ret.columns or next_day not in asset_ret.index:
-                    return 0.0
-                v = asset_ret.loc[next_day, pick]
-                return 0.0 if pd.isna(v) else float(v)
+        risky = (0.6 * r1 if pk1 != "CASH" else 0) + (0.4 * r2 if pk2 != "CASH" else 0)
+        cash  = (0.6 * cash_daily_rate if pk1 == "CASH" else 0) + \
+                (0.4 * cash_daily_rate if pk2 == "CASH" else 0)
+        day_ret = risky * lev_t + cash
 
-            r1 = get_ret(pk1)
-            r2 = get_ret(pk2)
+        # 更新淨值
+        cum_value  *= (1 + day_ret)
+        peak_value  = max(peak_value, cum_value)
 
-            risky = (0.6 * r1 if pk1 != "CASH" else 0) + (0.4 * r2 if pk2 != "CASH" else 0)
-            cash  = (0.6 * cash_daily_rate if pk1 == "CASH" else 0) + \
-                    (0.4 * cash_daily_rate if pk2 == "CASH" else 0)
-            day_ret = risky * lev_bt + cash
+        rows.append({"Date": date, "ret": day_ret, "pk1": pk1, "pk2": pk2,
+                     "lev": lev_t, "sl": sl_state})
 
-            # 更新淨值與高點
-            cum_value *= (1 + day_ret)
-            peak_value = max(peak_value, cum_value)
+    if not rows:
+        st.error("❌ 回測區間內沒有有效資料")
+        st.stop()
 
-            rows.append({
-                "Date":    date,
-                "ret":     day_ret,
-                "pk1":     pk1,
-                "pk2":     pk2,
-                "lev":     lev_bt,
-                "sl":      sl_state,
-                "bs_hit":  bs_hit,
-            })
+    res = pd.DataFrame(rows).set_index("Date")
+    res["cum_strat"] = (1 + res["ret"]).cumprod() - 1
+    res["cum_spy"]   = (1 + spy_ret.reindex(res.index).fillna(0)).cumprod() - 1
 
-        if not rows:
-            st.error("❌ 回測區間內沒有有效資料")
-            st.stop()
+    # 圖表
+    chart = (res[["cum_strat", "cum_spy"]] * 100).rename(
+        columns={"cum_strat": "SEGM策略", "cum_spy": "SPY基準"}
+    )
+    st.line_chart(chart, use_container_width=True)
 
-        res = pd.DataFrame(rows).set_index("Date")
-        res["cum_strat"] = (1 + res["ret"]).cumprod() - 1
-        res["cum_spy"]   = (1 + spy_ret.reindex(res.index).fillna(0)).cumprod() - 1
+    # 績效摘要
+    m_s = calc_metrics(res["ret"], cash_daily_rate)
+    m_b = calc_metrics(spy_ret.reindex(res.index).fillna(0), cash_daily_rate)
 
-        # ── 圖表 ──
-        chart = (res[["cum_strat", "cum_spy"]] * 100).rename(
-            columns={"cum_strat": "SEGM策略", "cum_spy": "SPY基準"}
-        )
-        st.line_chart(chart, use_container_width=True)
+    st.subheader("📊 績效摘要")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("年化報酬（CAGR）",  f"{m_s['cagr']:.2%}",   f"SPY: {m_b['cagr']:.2%}")
+    c2.metric("夏普比率",          f"{m_s['sharpe']:.2f}", f"SPY: {m_b['sharpe']:.2f}")
+    c3.metric("最大回撤（MDD）",   f"{m_s['mdd']:.2%}",    f"SPY: {m_b['mdd']:.2%}")
+    c4.metric("勝率",              f"{m_s['winrate']:.1%}", f"SPY: {m_b['winrate']:.1%}")
 
-        # ── 績效摘要 ──
-        m_s = calc_metrics(res["ret"],                               cash_daily_rate)
-        m_b = calc_metrics(spy_ret.reindex(res.index).fillna(0),    cash_daily_rate)
+    d1, d2 = st.columns(2)
+    d1.metric("SEGM 總累積報酬", f"{m_s['total']*100:.2f}%",
+              f"{(m_s['total'] - m_b['total'])*100:.2f}% vs SPY")
+    d2.metric("SPY 總累積報酬",  f"{m_b['total']*100:.2f}%")
 
-        st.subheader("📊 績效摘要")
-        cols = st.columns(5)
-        metrics = [
-            ("年化報酬 CAGR",   f"{m_s['cagr']:.2%}",    f"SPY {m_b['cagr']:.2%}"),
-            ("夏普比率",        f"{m_s['sharpe']:.2f}",  f"SPY {m_b['sharpe']:.2f}"),
-            ("最大回撤 MDD",    f"{m_s['mdd']:.2%}",     f"SPY {m_b['mdd']:.2%}"),
-            ("Calmar 比率",     f"{m_s['calmar']:.2f}",  f"SPY {m_b['calmar']:.2f}"),
-            ("勝率",            f"{m_s['winrate']:.1%}", f"SPY {m_b['winrate']:.1%}"),
-        ]
-        for col, (label, val, delta) in zip(cols, metrics):
-            col.metric(label, val, delta)
+    # 最近30天輪動紀錄
+    st.subheader("🔄 最近 30 天輪動紀錄")
+    recent = res[["pk1","pk2","lev","sl","ret"]].tail(30).copy()
+    recent["ret"] = recent["ret"].map(lambda x: f"{x*100:+.2f}%")
+    recent["lev"] = recent["lev"].map(lambda x: f"{x}x")
+    recent.index = recent.index.strftime("%Y-%m-%d")
+    recent.columns = ["第一名 (60%)", "第二名 (40%)", "槓桿", "止損狀態", "當日報酬"]
+    st.dataframe(recent[::-1], use_container_width=True)
 
-        d1, d2, d3 = st.columns(3)
-        d1.metric("SEGM 總累積報酬", f"{m_s['total']*100:.1f}%",
-                  f"{(m_s['total']-m_b['total'])*100:.1f}% vs SPY")
-        d2.metric("SPY 總累積報酬",  f"{m_b['total']*100:.1f}%")
-        d3.metric("年化波動率",      f"{m_s['vol']:.2%}", f"SPY {m_b['vol']:.2%}")
-
-        # ── 止損 & 黑天鵝觸發記錄 ──
-        with st.expander("🛡️ 止損觸發紀錄"):
-            sl_events = res[res["sl"] != "normal"][["pk1","pk2","lev","sl","ret"]]
-            if sl_events.empty:
-                st.success("回測期間未觸發止損 ✅")
-            else:
-                sl_events.index = sl_events.index.strftime("%Y-%m-%d")
-                sl_events.columns = ["標的1","標的2","槓桿","止損狀態","當日報酬"]
-                sl_events["當日報酬"] = sl_events["當日報酬"].map(lambda x: f"{x*100:+.2f}%")
-                st.dataframe(sl_events, use_container_width=True)
-
-        with st.expander("🦢 黑天鵝觸發紀錄"):
-            bs_events = res[res["bs_hit"] == True][["pk1","pk2","lev","ret"]]
-            if bs_events.empty:
-                st.success("回測期間未觸發黑天鵝防護 ✅")
-            else:
-                bs_events.index = bs_events.index.strftime("%Y-%m-%d")
-                bs_events.columns = ["標的1","標的2","緊急槓桿","當日報酬"]
-                bs_events["當日報酬"] = bs_events["當日報酬"].map(lambda x: f"{x*100:+.2f}%")
-                st.dataframe(bs_events, use_container_width=True)
-
-        # ── 最近30天輪動 ──
-        with st.expander("🔄 最近 30 天輪動紀錄"):
-            recent = res[["pk1","pk2","lev","sl","ret"]].tail(30).copy()
-            recent["ret"] = recent["ret"].map(lambda x: f"{x*100:+.2f}%")
-            recent["lev"] = recent["lev"].map(lambda x: f"{x}x")
-            recent.index  = recent.index.strftime("%Y-%m-%d")
-            recent.columns = ["第一名(60%)", "第二名(40%)", "槓桿", "止損狀態", "當日報酬"]
-            st.dataframe(recent[::-1], use_container_width=True)
+    # 止損觸發紀錄
+    sl_events = res[res["sl"] != "normal"]
+    if not sl_events.empty:
+        with st.expander(f"🛡️ 止損觸發紀錄（共 {len(sl_events)} 天）"):
+            sl_show = sl_events[["pk1","pk2","lev","sl","ret"]].copy()
+            sl_show["ret"] = sl_show["ret"].map(lambda x: f"{x*100:+.2f}%")
+            sl_show["lev"] = sl_show["lev"].map(lambda x: f"{x}x")
+            sl_show.index  = sl_show.index.strftime("%Y-%m-%d")
+            sl_show.columns = ["標的1","標的2","槓桿","止損狀態","當日報酬"]
+            st.dataframe(sl_show, use_container_width=True)
 
 except Exception as e:
     import traceback
