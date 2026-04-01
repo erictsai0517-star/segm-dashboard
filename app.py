@@ -48,9 +48,14 @@ kelly_min      = st.sidebar.slider("槓桿下限", 0.1, 1.0, 0.8, 0.1)
 st.sidebar.caption("凱利公式動態計算最佳槓桿，最大化長期複利終值")
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("**📉 VIX 緊急降槓**")
-vix_panic     = st.sidebar.slider("VIX 緊急上限", 20, 60, 30, 1)
-vix_panic_lev = st.sidebar.slider("VIX 觸發後槓桿上限", 0.1, 1.0, 0.1, 0.1)
+st.sidebar.markdown("**📉 VIX 動態槓桿上限**")
+vix_base = st.sidebar.slider("基準 VIX（正常市場）", 10, 30, 20, 1)
+st.sidebar.caption(
+    f"動態上限 = 槓桿上限 × ({vix_base} / 當日VIX)\n"
+    f"VIX={vix_base} → 上限不變\n"
+    f"VIX={vix_base*2} → 上限砍半\n"
+    f"恐慌越高，槓桿天花板自動壓低"
+)
 
 st.sidebar.markdown("---")
 start_date = st.sidebar.date_input("回測起始日期", datetime.date(2018, 1, 1))
@@ -86,13 +91,21 @@ def load_data(ticker_map):
     return pd.DataFrame(series_dict).ffill().bfill()
 
 
-def kelly_leverage(ret_series, fraction, lev_min, lev_max):
+def kelly_leverage(ret_series, fraction, lev_min, lev_max, vix_val=20.0, vix_base=20.0):
+    """
+    凱利公式 f* = μ/σ²
+    槓桿上限動態跟 VIX 掛鉤：dynamic_max = lev_max × (vix_base / vix)
+    VIX 越高上限越低，恐慌越大自動壓縮槓桿天花板
+    """
     r = ret_series.dropna()
     if len(r) < 5: return fraction
     mu     = r.mean()
     sigma2 = r.var()
     if sigma2 <= 0 or mu <= 0: return lev_min
-    return float(np.clip((mu / sigma2) * fraction, lev_min, lev_max))
+    # 動態上限
+    dynamic_max = lev_max * (vix_base / max(vix_val, 1.0))
+    dynamic_max = max(dynamic_max, lev_min)  # 不低於下限
+    return float(np.clip((mu / sigma2) * fraction, lev_min, dynamic_max))
 
 
 def calc_metrics(ret, rf_daily=0.0):
@@ -149,9 +162,8 @@ try:
         if p2 == "BTC": p2 = "QQQ" if qqq_m >= 0 else "CASH"
 
     recent_qqq = df_all["QQQ"].pct_change().iloc[-kelly_window:]
-    lev_now = kelly_leverage(recent_qqq, kelly_fraction, kelly_min, kelly_max)
-    if vix_now > vix_panic:
-        lev_now = min(lev_now, vix_panic_lev)
+    lev_now = kelly_leverage(recent_qqq, kelly_fraction, kelly_min, kelly_max,
+                             vix_val=vix_now, vix_base=vix_base)
 
     col1, col2 = st.columns(2)
     with col1:
@@ -165,9 +177,10 @@ try:
         st.subheader("⚠️ 風控狀態")
         st.write(f"VIX：**{vix_now:.2f}**")
         st.write(f"BTC：**{btc_now:,.0f}** / {btc_ma_period}日均線：**{btc_ma_now:,.0f}**")
-        if vix_now > vix_panic: st.error(f"🚨 VIX>{vix_panic} 緊急降槓至 {vix_panic_lev}x")
-        elif vix_now > 20:      st.warning("⚠️ 市場波動加劇")
-        else:                   st.success("✅ 市場狀態正常")
+        dynamic_max_now = kelly_max * (vix_base / max(vix_now, 1.0))
+        if vix_now > vix_base: st.warning(f"⚠️ VIX={vix_now:.1f} > 基準{vix_base}，動態上限壓至 {dynamic_max_now:.2f}x")
+        elif vix_now > 20:     st.warning("⚠️ 市場波動加劇")
+        else:                  st.success("✅ 市場狀態正常")
 
     st.markdown("**📋 當日動能排名**")
     st.dataframe(pd.DataFrame({
@@ -217,11 +230,8 @@ try:
             proxy = asset_ret[pk1 if pk1 != "CASH" else "QQQ"]
             wr    = proxy.loc[:date].iloc[-kelly_window:]
 
-        lev_t = kelly_leverage(wr, kelly_fraction, kelly_min, kelly_max)
-
-        vix_t = bt.loc[date, "VIX"]
-        if vix_t > vix_panic:
-            lev_t = min(lev_t, vix_panic_lev)
+        lev_t = kelly_leverage(wr, kelly_fraction, kelly_min, kelly_max,
+                               vix_val=vix_t, vix_base=vix_base)
 
         # 手續費（換倉才扣，買賣雙邊）
         fee = 0.0
