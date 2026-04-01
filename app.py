@@ -58,6 +58,13 @@ st.sidebar.caption(
 )
 
 st.sidebar.markdown("---")
+st.sidebar.markdown("**🦢 黑天鵝防護**")
+bs_vix_spike  = st.sidebar.slider("VIX 單日暴漲觸發（%）", 15, 60, 30, 5)
+bs_lev_cap    = st.sidebar.slider("觸發後次日槓桿上限", 0.1, 1.0, 0.3, 0.1)
+bs_cooldown   = st.sidebar.slider("冷卻天數", 1, 5, 2, 1)
+st.sidebar.caption(f"VIX 單日漲幅 > {bs_vix_spike}% → 次日槓桿強制壓到 {bs_lev_cap}x，持續 {bs_cooldown} 天")
+
+st.sidebar.markdown("---")
 start_date = st.sidebar.date_input("回測起始日期", datetime.date(2018, 1, 1))
 end_date   = st.sidebar.date_input("回測結束日期", datetime.date.today())
 
@@ -186,9 +193,12 @@ try:
         st.write(f"VIX：**{vix_now:.2f}**")
         st.write(f"BTC：**{btc_now:,.0f}** / {btc_ma_period}日均線：**{btc_ma_now:,.0f}**")
         dynamic_max_now = kelly_max * (vix_base / max(vix_now, 1.0))
-        if vix_now > vix_base: st.warning(f"⚠️ VIX={vix_now:.1f} > 基準{vix_base}，動態上限壓至 {dynamic_max_now:.2f}x")
-        elif vix_now > 20:     st.warning("⚠️ 市場波動加劇")
-        else:                  st.success("✅ 市場狀態正常")
+        vix_chg_now = df_all["VIX"].pct_change().iloc[-1] * 100
+        if vix_chg_now > bs_vix_spike:
+            st.error(f"🦢 黑天鵝觸發！VIX 單日暴漲 {vix_chg_now:.1f}%，明日槓桿上限壓至 {bs_lev_cap}x")
+        elif vix_now > vix_base: st.warning(f"⚠️ VIX={vix_now:.1f} > 基準{vix_base}，動態上限 {dynamic_max_now:.2f}x")
+        elif vix_now > 20:       st.warning("⚠️ 市場波動加劇")
+        else:                    st.success("✅ 市場狀態正常")
 
     st.markdown("**📋 當日動能排名**")
     st.dataframe(pd.DataFrame({
@@ -203,11 +213,13 @@ try:
 
     asset_ret    = df_all[TRADABLE].pct_change()
     spy_ret      = df_all["SPY"].pct_change()
+    vix_daily_chg = df_all["VIX"].pct_change()  # VIX 每日變動率
     strat_ret_ts = pd.Series(dtype=float)
 
-    rows     = []
-    prev_pk1 = None
-    prev_pk2 = None
+    rows        = []
+    prev_pk1    = None
+    prev_pk2    = None
+    bs_cd_left  = 0   # 黑天鵝冷卻剩餘天數
 
     for date in bt.index[:-1]:
         if date not in momentum.index: continue
@@ -275,6 +287,15 @@ try:
         lev_t = kelly_leverage(wr, kelly_fraction, dyn_min, dyn_max,
                                vix_val=vix_t, vix_base=vix_base)
 
+        # ── 黑天鵝防護：VIX 單日暴漲 → 次日強制壓槓桿 ──
+        vix_chg_t = vix_daily_chg.loc[date] if date in vix_daily_chg.index else 0
+        bs_hit    = (not pd.isna(vix_chg_t)) and (vix_chg_t * 100 > bs_vix_spike)
+        if bs_hit:
+            bs_cd_left = bs_cooldown  # 今天觸發，接下來 N 天上限壓低
+        if bs_cd_left > 0:
+            lev_t     = min(lev_t, bs_lev_cap)
+            bs_cd_left -= 1
+
         # 手續費（換倉才扣，買賣雙邊，用動態權重）
         fee = 0.0
         if prev_pk1 is not None:
@@ -302,6 +323,7 @@ try:
         day_ret = risky * lev_t + cash_r - fee
 
         regime = "🐂牛" if is_bull else "🐻熊" if is_bear else "↔震"
+        if bs_hit: regime += "🦢"
         strat_ret_ts = pd.concat([strat_ret_ts, pd.Series([day_ret], index=[date])])
         rows.append({"Date": date, "ret": day_ret, "pk1": pk1, "pk2": pk2,
                      "w1": w1, "lev": lev_t, "regime": regime, "fee": fee})
