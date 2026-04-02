@@ -233,15 +233,25 @@ def run_backtest(df_all, bt, sharpe_mom, adx_qqq,
 
         vix_t = bt.loc[date, "VIX"]
 
-        # ── ADX 趨勢強度判斷 ──
-        adx_val   = adx_qqq.loc[date] if date in adx_qqq.index else 25.0
-        is_trend  = (not pd.isna(adx_val)) and (adx_val >= ADX_THRESHOLD)
+        # ── ADX 趨勢強度 + QQQ 200日均線方向 ──
+        adx_val  = adx_qqq.loc[date] if date in adx_qqq.index else 25.0
+        qqq_now  = df_all.loc[date, "QQQ"]   if date in df_all.index else 0
+        qqq_ma200= df_all.loc[date, "QQQ_MA200"] if date in df_all.index else 0
+        above_ma200 = (not pd.isna(qqq_ma200)) and (qqq_now > qqq_ma200)
+
+        # 三種狀態：
+        # 趨勢向上（ADX>20 且 QQQ在200MA上方）→ 趨勢引擎全開
+        # 趨勢向下（ADX>20 且 QQQ在200MA下方）→ 退場持SHY（有方向的熊市）
+        # 震盪（ADX<20）→ 退場持SHY
+        is_trend = (not pd.isna(adx_val)) and (adx_val >= ADX_THRESHOLD) and above_ma200
 
         if not is_trend:
-            # 震盪：退場持 SHY
             pk1, pk2 = SAFE_ASSET, SAFE_ASSET
             w1,  w2  = 0.6, 0.4
-            regime   = "↔️震盪"
+            if (not pd.isna(adx_val)) and (adx_val >= ADX_THRESHOLD) and not above_ma200:
+                regime = "🐻熊市退場"   # 有趨勢但向下
+            else:
+                regime = "↔️震盪退場"   # 無趨勢
         else:
             # ── Sharpe 動能選股 ──
             sm_t = sharpe_mom.loc[date, TRADABLE].dropna().sort_values(ascending=False)
@@ -346,6 +356,7 @@ try:
         st.error(f"❌ 缺少關鍵欄位：{missing}"); st.stop()
 
     df_all["BTC_MA"] = df_all["BTC"].rolling(btc_ma_period).mean()
+    df_all["QQQ_MA200"] = df_all["QQQ"].rolling(200).mean()  # 牛熊分界線
 
     # 預計算指標（全段歷史）
     sharpe_mom = sharpe_momentum(df_all[TRADABLE + ["QQQ"]]
@@ -364,15 +375,21 @@ try:
     vix_now    = bt.loc[today, "VIX"]
     btc_now    = bt.loc[today, "BTC"]
     btc_ma_now = bt.loc[today, "BTC_MA"]
-    adx_now    = adx_qqq.loc[today] if today in adx_qqq.index else 0
-    is_trend   = (not pd.isna(adx_now)) and (adx_now >= ADX_THRESHOLD)
+    adx_now     = adx_qqq.loc[today] if today in adx_qqq.index else 0
+    qqq_now     = bt.loc[today, "QQQ"] if "QQQ" in bt.columns else df_all.loc[today, "QQQ"]
+    qqq_ma200   = df_all.loc[today, "QQQ_MA200"]
+    above_ma200 = (not pd.isna(qqq_ma200)) and (qqq_now > qqq_ma200)
+    is_trend    = (not pd.isna(adx_now)) and (adx_now >= ADX_THRESHOLD) and above_ma200
 
     sm_today = sharpe_mom.loc[today, TRADABLE].dropna().sort_values(ascending=False)
 
     if not is_trend:
         p1, p2   = SAFE_ASSET, SAFE_ASSET
         s1_val   = s2_val = 0.0
-        regime_now = f"↔️ 震盪（ADX={adx_now:.1f}<{ADX_THRESHOLD}）→ 持 SHY"
+        if (not pd.isna(adx_now)) and (adx_now >= ADX_THRESHOLD) and not above_ma200:
+            regime_now = f"🐻 熊市退場（ADX={adx_now:.1f}，QQQ在200MA下方）→ 持 SHY"
+        else:
+            regime_now = f"↔️ 震盪退場（ADX={adx_now:.1f}<{ADX_THRESHOLD}）→ 持 SHY"
     else:
         p1 = sm_today.index[0] if len(sm_today) > 0 else "CASH"
         p2 = sm_today.index[1] if len(sm_today) > 1 else "CASH"
@@ -421,6 +438,7 @@ try:
     with col2:
         st.subheader("⚠️ 風控狀態")
         st.write(f"VIX：**{vix_now:.2f}**　BTC：**{btc_now:,.0f}** / 均線 **{btc_ma_now:,.0f}**")
+        st.write(f"QQQ：**{qqq_now:.1f}** / 200日均線：**{qqq_ma200:.1f}** {'✅上方' if above_ma200 else '❌下方'}")
         st.write(f"市場狀態：**{regime_now}**")
         dyn_max = kelly_max * (vix_base / max(vix_now, 1.0))
         if not is_trend:
@@ -458,16 +476,16 @@ try:
         use_container_width=True
     )
 
-    trade_days   = (res["fee"] > 0).sum()
-    total_fee    = res["fee"].sum() * 100
-    total_margin = res["margin"].sum() * 100
-    trend_days   = (res["regime"] != "↔️震盪").sum()
-    sideline_days= (res["regime"] == "↔️震盪").sum()
+    trend_days   = (res["regime"].str.contains("牛市") | ~res["regime"].str.contains("退場")).sum()
+    bear_days    = res["regime"].str.contains("熊市退場").sum()
+    sideline_days= res["regime"].str.contains("震盪退場").sum()
     st.caption(
         f"💸 手續費：**{total_fee:.2f}%**（{trade_days}天換倉）　"
         f"📊 融資成本：**{total_margin:.2f}%**　"
-        f"合計摩擦：**{total_fee+total_margin:.2f}%**　"
-        f"｜趨勢運行：**{trend_days}天**　空倉SHY：**{sideline_days}天**"
+        f"合計摩擦：**{total_fee+total_margin:.2f}%**　｜　"
+        f"趨勢做多：**{trend_days}天**　"
+        f"熊市退場：**{bear_days}天**　"
+        f"震盪退場：**{sideline_days}天**"
     )
 
     # ── 四版本對比 ──
@@ -491,66 +509,4 @@ try:
         compare_rows.append({
             "版本":       name,
             "總累積報酬": f"{m['total']*100:.1f}%",
-            "年化報酬":   f"{m['cagr']*100:.1f}%",
-            "最大回撤":   f"{m['mdd']*100:.1f}%",
-            "夏普比率":   f"{m['sharpe']:.2f}",
-            "Calmar":     f"{m['calmar']:.2f}",
-            "勝率":       f"{m['winrate']*100:.1f}%",
-        })
-
-    if preset_name == "🎯 自訂":
-        compare_rows.append({
-            "版本": "🎯 自訂（當前）",
-            "總累積報酬": f"{m_cur['total']*100:.1f}%",
-            "年化報酬":   f"{m_cur['cagr']*100:.1f}%",
-            "最大回撤":   f"{m_cur['mdd']*100:.1f}%",
-            "夏普比率":   f"{m_cur['sharpe']:.2f}",
-            "Calmar":     f"{m_cur['calmar']:.2f}",
-            "勝率":       f"{m_cur['winrate']*100:.1f}%",
-        })
-
-    compare_rows.append({
-        "版本": "📌 SPY 基準",
-        "總累積報酬": f"{m_spy['total']*100:.1f}%",
-        "年化報酬":   f"{m_spy['cagr']*100:.1f}%",
-        "最大回撤":   f"{m_spy['mdd']*100:.1f}%",
-        "夏普比率":   f"{m_spy['sharpe']:.2f}",
-        "Calmar":     f"{m_spy['calmar']:.2f}",
-        "勝率":       f"{m_spy['winrate']*100:.1f}%",
-    })
-    st.dataframe(pd.DataFrame(compare_rows), use_container_width=True, hide_index=True)
-
-    # ── 詳細績效 ──
-    st.subheader(f"📋 {preset_name} 詳細績效")
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("年化報酬 CAGR", f"{m_cur['cagr']:.2%}",    f"SPY: {m_spy['cagr']:.2%}")
-    c2.metric("夏普比率",       f"{m_cur['sharpe']:.2f}",  f"SPY: {m_spy['sharpe']:.2f}")
-    c3.metric("最大回撤 MDD",  f"{m_cur['mdd']:.2%}",     f"SPY: {m_spy['mdd']:.2%}")
-    c4.metric("Calmar 比率",   f"{m_cur['calmar']:.2f}",  f"SPY: {m_spy['calmar']:.2f}")
-    c5.metric("勝率",           f"{m_cur['winrate']:.1%}", f"SPY: {m_spy['winrate']:.1%}")
-    d1, d2 = st.columns(2)
-    d1.metric("SEGM 總累積報酬", f"{m_cur['total']*100:.2f}%",
-              f"{(m_cur['total']-m_spy['total'])*100:.2f}% vs SPY")
-    d2.metric("SPY 總累積報酬",  f"{m_spy['total']*100:.2f}%")
-
-    with st.expander("📊 凱利槓桿 & ADX 歷史"):
-        st.line_chart(res["lev"].rename("槓桿"), use_container_width=True)
-        adx_bt = adx_qqq.reindex(res.index)
-        st.line_chart(adx_bt.rename("ADX（趨勢強度）"), use_container_width=True)
-        st.caption(f"平均槓桿 {res['lev'].mean():.2f}x　ADX平均 {adx_bt.mean():.1f}　"
-                   f"低於閾值（震盪）天數：{sideline_days} 天")
-
-    st.subheader("🔄 最近 30 天輪動紀錄")
-    recent = res[["pk1","pk2","lev","adx","regime","fee","ret"]].tail(30).copy()
-    recent["ret"] = recent["ret"].map(lambda x: f"{x*100:+.2f}%")
-    recent["lev"] = recent["lev"].map(lambda x: f"{x:.2f}x")
-    recent["fee"] = recent["fee"].map(lambda x: f"{x*100:.3f}%" if x > 0 else "-")
-    recent.index  = recent.index.strftime("%Y-%m-%d")
-    recent.columns = ["第一名","第二名","槓桿","ADX","市場狀態","手續費","當日報酬"]
-    st.dataframe(recent[::-1], use_container_width=True)
-
-except Exception as e:
-    import traceback
-    st.error(f"⚠️ 執行錯誤：{e}")
-    with st.expander("詳細錯誤"):
-        st.code(traceback.format_exc())
+     
