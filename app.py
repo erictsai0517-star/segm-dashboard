@@ -233,25 +233,25 @@ def run_backtest(df_all, bt, sharpe_mom, adx_qqq,
 
         vix_t = bt.loc[date, "VIX"]
 
-        # ── ADX 趨勢強度 + QQQ 200日均線方向 ──
-        adx_val  = adx_qqq.loc[date] if date in adx_qqq.index else 25.0
-        qqq_now  = df_all.loc[date, "QQQ"]   if date in df_all.index else 0
-        qqq_ma200= df_all.loc[date, "QQQ_MA200"] if date in df_all.index else 0
-        above_ma200 = (not pd.isna(qqq_ma200)) and (qqq_now > qqq_ma200)
+        # ── ADX 趨勢強度 + 黃金/死亡交叉方向過濾 ──
+        adx_val   = adx_qqq.loc[date] if date in adx_qqq.index else 25.0
+        ma50_t    = df_all.loc[date, "QQQ_MA50"]  if date in df_all.index else np.nan
+        ma200_t   = df_all.loc[date, "QQQ_MA200"] if date in df_all.index else np.nan
+        golden_x  = (not pd.isna(ma50_t)) and (not pd.isna(ma200_t)) and (ma50_t > ma200_t)
 
         # 三種狀態：
-        # 趨勢向上（ADX>20 且 QQQ在200MA上方）→ 趨勢引擎全開
-        # 趨勢向下（ADX>20 且 QQQ在200MA下方）→ 退場持SHY（有方向的熊市）
-        # 震盪（ADX<20）→ 退場持SHY
-        is_trend = (not pd.isna(adx_val)) and (adx_val >= ADX_THRESHOLD) and above_ma200
+        # 黃金交叉 且 ADX>20  → 趨勢向上，引擎全開
+        # 死亡交叉（MA50<MA200）→ 退場持SHY（熊市）
+        # ADX<20（震盪）      → 退場持SHY
+        is_trend = (not pd.isna(adx_val)) and (adx_val >= ADX_THRESHOLD) and golden_x
 
         if not is_trend:
             pk1, pk2 = SAFE_ASSET, SAFE_ASSET
             w1,  w2  = 0.6, 0.4
-            if (not pd.isna(adx_val)) and (adx_val >= ADX_THRESHOLD) and not above_ma200:
-                regime = "🐻熊市退場"   # 有趨勢但向下
+            if (not pd.isna(adx_val)) and (adx_val >= ADX_THRESHOLD) and not golden_x:
+                regime = "🐻熊市退場"   # 死亡交叉，有趨勢但向下
             else:
-                regime = "↔️震盪退場"   # 無趨勢
+                regime = "↔️震盪退場"   # ADX 低，無趨勢
         else:
             # ── Sharpe 動能選股 ──
             sm_t = sharpe_mom.loc[date, TRADABLE].dropna().sort_values(ascending=False)
@@ -356,7 +356,9 @@ try:
         st.error(f"❌ 缺少關鍵欄位：{missing}"); st.stop()
 
     df_all["BTC_MA"] = df_all["BTC"].rolling(btc_ma_period).mean()
-    df_all["QQQ_MA200"] = df_all["QQQ"].rolling(200).mean()  # 牛熊分界線
+    df_all["QQQ_MA50"]  = df_all["QQQ"].rolling(50).mean()
+    df_all["QQQ_MA200"] = df_all["QQQ"].rolling(200).mean()
+    # 黃金交叉：MA50 > MA200（做多）　死亡交叉：MA50 < MA200（退場）
 
     # 預計算指標（全段歷史）
     sharpe_mom = sharpe_momentum(df_all[TRADABLE + ["QQQ"]]
@@ -375,19 +377,19 @@ try:
     vix_now    = bt.loc[today, "VIX"]
     btc_now    = bt.loc[today, "BTC"]
     btc_ma_now = bt.loc[today, "BTC_MA"]
-    adx_now     = adx_qqq.loc[today] if today in adx_qqq.index else 0
-    qqq_now     = bt.loc[today, "QQQ"] if "QQQ" in bt.columns else df_all.loc[today, "QQQ"]
-    qqq_ma200   = df_all.loc[today, "QQQ_MA200"]
-    above_ma200 = (not pd.isna(qqq_ma200)) and (qqq_now > qqq_ma200)
-    is_trend    = (not pd.isna(adx_now)) and (adx_now >= ADX_THRESHOLD) and above_ma200
+    adx_now    = adx_qqq.loc[today] if today in adx_qqq.index else 0
+    ma50_now   = df_all.loc[today, "QQQ_MA50"]
+    ma200_now  = df_all.loc[today, "QQQ_MA200"]
+    golden_x   = (not pd.isna(ma50_now)) and (not pd.isna(ma200_now)) and (ma50_now > ma200_now)
+    is_trend   = (not pd.isna(adx_now)) and (adx_now >= ADX_THRESHOLD) and golden_x
 
     sm_today = sharpe_mom.loc[today, TRADABLE].dropna().sort_values(ascending=False)
 
     if not is_trend:
         p1, p2   = SAFE_ASSET, SAFE_ASSET
         s1_val   = s2_val = 0.0
-        if (not pd.isna(adx_now)) and (adx_now >= ADX_THRESHOLD) and not above_ma200:
-            regime_now = f"🐻 熊市退場（ADX={adx_now:.1f}，QQQ在200MA下方）→ 持 SHY"
+        if (not pd.isna(adx_now)) and (adx_now >= ADX_THRESHOLD) and not golden_x:
+            regime_now = f"🐻 死亡交叉（MA50={ma50_now:.1f} < MA200={ma200_now:.1f}）→ 持 SHY"
         else:
             regime_now = f"↔️ 震盪退場（ADX={adx_now:.1f}<{ADX_THRESHOLD}）→ 持 SHY"
     else:
@@ -438,7 +440,9 @@ try:
     with col2:
         st.subheader("⚠️ 風控狀態")
         st.write(f"VIX：**{vix_now:.2f}**　BTC：**{btc_now:,.0f}** / 均線 **{btc_ma_now:,.0f}**")
-        st.write(f"QQQ：**{qqq_now:.1f}** / 200日均線：**{qqq_ma200:.1f}** {'✅上方' if above_ma200 else '❌下方'}")
+        cross_status = f"🟢 黃金交叉（MA50={ma50_now:.1f} > MA200={ma200_now:.1f}）" if golden_x \
+                       else f"🔴 死亡交叉（MA50={ma50_now:.1f} < MA200={ma200_now:.1f}）"
+        st.write(f"QQQ 均線狀態：**{cross_status}**")
         st.write(f"市場狀態：**{regime_now}**")
         dyn_max = kelly_max * (vix_base / max(vix_now, 1.0))
         if not is_trend:
