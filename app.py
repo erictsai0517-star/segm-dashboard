@@ -53,8 +53,8 @@ STRATEGIES = {
         "adx_th":       20,
     },
     "⚖️ 平衡型": {
-        "desc":         "長期終值優於 SPY 且 MDD < 25%。QQQ+BTC+IEF+SGOL，中槓桿。",
-        "tradable":     ["QQQ", "BTC", "IEF", "SGOL"],
+        "desc":         "長期終值優於 SPY 且 MDD < 25%。QQQ+BTC+IEF，中槓桿。",
+        "tradable":     ["QQQ", "BTC", "IEF"],
         "kelly_f":      0.6,
         "kelly_max":    2.5,
         "kelly_min":    0.5,
@@ -239,7 +239,15 @@ def run_backtest(df_all, bt, cfg, btc_ma_period, cash_daily_rate):
         golden_x = (not pd.isna(ma50_t)) and (not pd.isna(ma200_t)) and (ma50_t > ma200_t)
         is_trend = (not pd.isna(adx_t)) and (adx_t >= adx_th) and golden_x
 
+        # ── ADX 動態部位縮放 ──
+        # ADX 20~40 線性插值，決定做多比例
+        # ADX < 20 = 0%做多，ADX >= 40 = 100%做多
         if not is_trend:
+            adx_scale = 0.0
+        else:
+            adx_scale = float(np.clip((adx_t - adx_th) / (40 - adx_th), 0.0, 1.0))
+
+        if adx_scale == 0.0:
             pk1 = pk2 = SAFE_ASSET
             w1  = w2  = 0.5
             regime = "🐻熊市退場" if (not pd.isna(adx_t) and adx_t >= adx_th and not golden_x) \
@@ -309,9 +317,9 @@ def run_backtest(df_all, bt, cfg, btc_ma_period, cash_daily_rate):
                 if pk2      not in [SAFE_ASSET]: fee += FEES.get(pk2,      0.001) * w2
         prev_pk1 = pk1; prev_pk2 = pk2
 
-        # 融資成本
-        risky_w     = (w1 if pk1 not in [SAFE_ASSET] else 0) + \
-                      (w2 if pk2 not in [SAFE_ASSET] else 0)
+        # 融資成本（只對做多部位收）
+        risky_w     = adx_scale * ((w1 if pk1 not in [SAFE_ASSET] else 0) +
+                                   (w2 if pk2 not in [SAFE_ASSET] else 0))
         margin_cost = max(0, lev_t - 1) * risky_w * margin_daily
 
         # 次日報酬
@@ -326,12 +334,16 @@ def run_backtest(df_all, bt, cfg, btc_ma_period, cash_daily_rate):
         def apply_lev(pick, r, lev):
             return r if pick == SAFE_ASSET else r * lev
 
-        day_ret = (w1 * apply_lev(pk1, r1, lev_t) +
-                   w2 * apply_lev(pk2, r2, lev_t) - fee - margin_cost)
+        # adx_scale 決定做多比例，其餘放 SHY
+        risky_ret = adx_scale * (w1 * apply_lev(pk1, r1, lev_t) +
+                                  w2 * apply_lev(pk2, r2, lev_t))
+        safe_ret  = (1 - adx_scale) * next_ret(SAFE_ASSET)
+        day_ret   = risky_ret + safe_ret - fee - margin_cost
 
         strat_ret_ts = pd.concat([strat_ret_ts, pd.Series([day_ret], index=[date])])
         rows.append({"Date": date, "ret": day_ret, "pk1": pk1, "pk2": pk2,
-                     "lev": lev_t, "regime": regime, "fee": fee, "margin": margin_cost})
+                     "lev": lev_t, "scale": round(adx_scale*100), "regime": regime,
+                     "fee": fee, "margin": margin_cost})
     return rows
 
 # ══════════════════════════════════════════
@@ -502,7 +514,7 @@ try:
     c2.metric("夏普比率",       f"{m_cur['sharpe']:.2f}",  f"SPY: {m_spy['sharpe']:.2f}")
     c3.metric("最大回撤 MDD",  f"{m_cur['mdd']:.2%}",     f"SPY: {m_spy['mdd']:.2%}")
     c4.metric("Calmar 比率",   f"{m_cur['calmar']:.2f}",  f"SPY: {m_spy['calmar']:.2f}")
-    c5.metric("勝率",           f"{m_cur['winrate']:.1%}", f"SPY: {m_spy['winrate']:.1%}")
+    c5.metric("勝率",           f"{m_cur['winrate']:.1%}", f"SPY: {m_spy['winrate']:.1%}"
     d1, d2 = st.columns(2)
     d1.metric("總累積報酬", f"{m_cur['total']*100:.2f}%",
               f"{(m_cur['total']-m_spy['total'])*100:.2f}% vs SPY")
@@ -514,12 +526,13 @@ try:
         st.line_chart(adx_bt.rename("ADX"), use_container_width=True)
 
     st.subheader("🔄 最近 30 天輪動紀錄")
-    recent = res[["pk1","pk2","lev","regime","fee","ret"]].tail(30).copy()
-    recent["ret"] = recent["ret"].map(lambda x: f"{x*100:+.2f}%")
-    recent["lev"] = recent["lev"].map(lambda x: f"{x:.2f}x")
-    recent["fee"] = recent["fee"].map(lambda x: f"{x*100:.3f}%" if x > 0 else "-")
-    recent.index  = recent.index.strftime("%Y-%m-%d")
-    recent.columns = ["第一名","第二名","槓桿","市場狀態","手續費","當日報酬"]
+    recent = res[["pk1","pk2","lev","scale","regime","fee","ret"]].tail(30).copy()
+    recent["ret"]   = recent["ret"].map(lambda x: f"{x*100:+.2f}%")
+    recent["lev"]   = recent["lev"].map(lambda x: f"{x:.2f}x")
+    recent["scale"] = recent["scale"].map(lambda x: f"{x}%")
+    recent["fee"]   = recent["fee"].map(lambda x: f"{x*100:.3f}%" if x > 0 else "-")
+    recent.index    = recent.index.strftime("%Y-%m-%d")
+    recent.columns  = ["第一名","第二名","槓桿","做多比例","市場狀態","手續費","當日報酬"]
     st.dataframe(recent[::-1], use_container_width=True)
 
 except Exception as e:
