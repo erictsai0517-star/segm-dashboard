@@ -13,15 +13,18 @@ st.title("🚀 SEGM Pro｜三策略版")
 # 常數
 # ══════════════════════════════════════════
 TICKER_MAP = {
-    "QQQ": "QQQ", "BTC": "BTC-USD",
-    "TLT": "TLT", "GLD": "GLD", "USO": "USO",
-    "SHY": "SHY", "SPY": "SPY", "VIX": "^VIX",
+    "QQQ":  "QQQ",     "BTC":  "BTC-USD",
+    "TLT":  "TLT",     "IEF":  "IEF",
+    "GLD":  "GLD",     "SGOL": "SGOL",
+    "USO":  "USO",     "SHY":  "SHY",
+    "SPY":  "SPY",     "VIX":  "^VIX",
 }
 
 FEES = {
-    "QQQ": 0.0005, "BTC": 0.001,
-    "TLT": 0.0005, "GLD": 0.0005,
-    "USO": 0.001,  "SHY": 0.0002, "CASH": 0.0,
+    "QQQ":  0.0005, "BTC":  0.001,
+    "TLT":  0.0005, "IEF":  0.0005,
+    "GLD":  0.0005, "SGOL": 0.0005,
+    "USO":  0.001,  "SHY":  0.0002, "CASH": 0.0,
 }
 
 SHARPE_MOM_WINDOW   = 60
@@ -40,18 +43,18 @@ SAFE_ASSET          = "SHY"
 STRATEGIES = {
     "🚀 極盡型": {
         "desc":         "最大化長期終值。高槓桿、完整標的池，接受高波動。",
-        "tradable":     ["QQQ", "BTC", "TLT", "GLD", "USO"],
+        "tradable":     ["QQQ", "BTC", "IEF", "GLD", "USO"],
         "kelly_f":      0.9,
         "kelly_max":    3.5,
         "kelly_min":    0.8,
         "kelly_window": 30,
         "vix_base":     22,
-        "corr_th":      0.3,   # 相關性門檻
-        "adx_th":       20,    # ADX 門檻
+        "corr_th":      0.3,
+        "adx_th":       20,
     },
     "⚖️ 平衡型": {
-        "desc":         "長期終值優於 SPY 且 MDD < 25%。中槓桿、精選標的。",
-        "tradable":     ["QQQ", "BTC", "TLT"],
+        "desc":         "長期終值優於 SPY 且 MDD < 25%。QQQ+BTC+IEF+SGOL，中槓桿。",
+        "tradable":     ["QQQ", "BTC", "IEF", "SGOL"],
         "kelly_f":      0.6,
         "kelly_max":    2.5,
         "kelly_min":    0.5,
@@ -61,15 +64,15 @@ STRATEGIES = {
         "adx_th":       20,
     },
     "🛡️ 防守型": {
-        "desc":         "長期穩定跑贏 SPY，MDD < 15%。低槓桿、保守選股、嚴格退場。",
-        "tradable":     ["QQQ", "TLT"],
+        "desc":         "長期穩定跑贏 SPY，MDD < 15%。QQQ+IEF+SGOL，低槓桿、嚴格退場。",
+        "tradable":     ["QQQ", "IEF", "SGOL"],
         "kelly_f":      0.4,
         "kelly_max":    1.8,
         "kelly_min":    0.3,
         "kelly_window": 60,
         "vix_base":     18,
-        "corr_th":      0.5,   # 防守型相關性門檻較寬鬆
-        "adx_th":       18,    # 更早退場
+        "corr_th":      0.5,
+        "adx_th":       18,
     },
 }
 
