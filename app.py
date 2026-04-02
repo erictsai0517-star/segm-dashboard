@@ -514,7 +514,7 @@ try:
     c2.metric("夏普比率",       f"{m_cur['sharpe']:.2f}",  f"SPY: {m_spy['sharpe']:.2f}")
     c3.metric("最大回撤 MDD",  f"{m_cur['mdd']:.2%}",     f"SPY: {m_spy['mdd']:.2%}")
     c4.metric("Calmar 比率",   f"{m_cur['calmar']:.2f}",  f"SPY: {m_spy['calmar']:.2f}")
-    c5.metric("勝率",           f"{m_cur['winrate']:.1%}", f"SPY: {m_spy['winrate']:.1%}"
+    c5.metric("勝率",           f"{m_cur['winrate']:.1%}", f"SPY: {m_spy['winrate']:.1%}")
     d1, d2 = st.columns(2)
     d1.metric("總累積報酬", f"{m_cur['total']*100:.2f}%",
               f"{(m_cur['total']-m_spy['total'])*100:.2f}% vs SPY")
